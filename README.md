@@ -67,3 +67,23 @@ goes is `JOBKIT_NOTIFY_URL` or the line in `~/.config/jobkit/notify-url`: `openc
 phone through the OpenClaw app (`openclaw nodes push`, no model turn; the body only says "Details on the jobs page",
 since the push travels through OpenClaw's relay); any other URL gets the text POSTed (ntfy-style, `Title` header).
 Nothing is sent if neither is set.
+
+## Prerequisites
+
+`jobkit.prereqs` checks what an app needs on the Mac and installs what is missing when the person asks: each part
+(`Part`: key, name, why, a check returning `(ok, detail)`, an install command as an argument list, a link, an
+"after" line for what only the person can do) and an `Installer` that runs one install in a thread and reports its
+progress. Common parts are built in (`brew()`, `uv()`, `rclone()`, `tailscale()`); an app adds its own.
+
+```python
+from jobkit import prereqs
+
+setup = prereqs.Installer([prereqs.brew(), prereqs.uv(), prereqs.tailscale(optional=True)])
+setup.report()      # each part: ok, what was found, its install command, link, "after", install progress
+setup.start("uv")   # `brew install uv` in a thread; ValueError says why not (no Homebrew, already there)
+```
+
+Serve the Install button only to `prereqs.local(client_host, forwarded)`: requests straight from the Mac, not a phone
+on the network. `prereqs.tailscale_name()` is the Mac's Tailscale name (`mac.tail1234.ts.net`), for allowing it in
+a Host check without a domain.
+

@@ -443,3 +443,61 @@ def test_offsite_setup_never_replaces_a_config_it_cannot_read(tmp_path):
     with pytest.raises(offsite.SetupError, match="move it away"):
         offsite.setup({"type": "local"}, str(tmp_path), conf, rclone="false")
     assert "old-password" in conf.read_text()
+
+
+def fake_command(folder, name, script):
+    path = folder / name
+    path.write_text("#!/bin/sh\n" + script)
+    path.chmod(0o755)
+    return path
+
+
+def test_prereqs_install_a_missing_part_with_homebrew_and_see_it_found(tmp_path, monkeypatch):
+    import time
+
+    from jobkit import prereqs
+
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    monkeypatch.setenv("PATH", f"{bin_dir}:/usr/bin:/bin")
+    monkeypatch.setattr(prereqs, "BREW_DIRS", [])
+    setup = prereqs.Installer([prereqs.brew(), prereqs.uv()])
+    with pytest.raises(ValueError, match="Homebrew first"):
+        setup.start("uv")
+    with pytest.raises(LookupError):
+        setup.start("brew")  # Homebrew's installer is the person's to run (a link), never started from here
+
+    # A stand-in Homebrew whose `brew install uv` puts a uv command on PATH.
+    fake_command(
+        bin_dir,
+        "brew",
+        f'[ "$1 $2" = "install uv" ] && printf "#!/bin/sh\\n" > {bin_dir}/uv && chmod +x {bin_dir}/uv && echo installed uv\n',
+    )
+    assert {p["key"]: p["ok"] for p in setup.report()} == {"brew": True, "uv": False}
+    setup.start("uv")
+    for _ in range(50):
+        if not setup.report()[1]["installing"].get("running"):
+            break
+        time.sleep(0.1)
+    uv_row = setup.report()[1]
+    assert uv_row["ok"] is True and uv_row["installing"]["ok"] is True and "installed uv" in uv_row["installing"]["log"]
+    with pytest.raises(ValueError, match="already there"):
+        setup.start("uv")
+
+
+def test_prereqs_tailscale_name_and_state_and_who_may_install(tmp_path, monkeypatch):
+    from jobkit import prereqs
+
+    monkeypatch.setenv("PATH", f"{tmp_path}:/usr/bin:/bin")
+    monkeypatch.setattr(prereqs, "BREW_DIRS", [])
+    monkeypatch.setattr(prereqs, "TAILSCALE_APP", str(tmp_path / "no-app"))
+    assert prereqs.tailscale_name() == "" and prereqs.tailscale().check() == (False, "not installed")
+    fake_command(
+        tmp_path,
+        "tailscale",
+        """echo '{"BackendState": "NeedsLogin", "Self": {"DNSName": "Mac.tail1234.ts.net."}}'\n""",
+    )
+    assert prereqs.tailscale_name() == "mac.tail1234.ts.net"
+    assert prereqs.tailscale().check() == (False, "installed, not connected (NeedsLogin)")
+    assert prereqs.local("127.0.0.1", forwarded=False) and prereqs.local("::1", forwarded=False)
+    assert not prereqs.local("127.0.0.1", forwarded=True) and not prereqs.local("100.64.0.7", forwarded=False)
