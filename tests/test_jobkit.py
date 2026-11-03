@@ -501,3 +501,45 @@ def test_prereqs_tailscale_name_and_state_and_who_may_install(tmp_path, monkeypa
     assert prereqs.tailscale().check() == (False, "installed, not connected (NeedsLogin)")
     assert prereqs.local("127.0.0.1", forwarded=False) and prereqs.local("::1", forwarded=False)
     assert not prereqs.local("127.0.0.1", forwarded=True) and not prereqs.local("100.64.0.7", forwarded=False)
+
+
+FAKE_TAILSCALE = """#!/bin/sh
+# tailscale, as far as serving goes: the served ports live in a file next to it
+STATE="$(dirname "$0")/served.json"
+[ -f "$STATE" ] || echo '{}' > "$STATE"
+case "$1 $2" in
+  "status --json") echo '{"BackendState": "Running", "Self": {"DNSName": "mac.tail1234.ts.net."}}' ;;
+  "serve status") cat "$STATE" ;;
+  "serve --bg") python3 - "$STATE" "$3" "$4" <<'PY'
+import json, sys
+state, port, target = sys.argv[1], sys.argv[2].split("=")[1], sys.argv[3]
+d = json.load(open(state)); d.setdefault("Web", {})[f"mac.tail1234.ts.net:{port}"] = {"Handlers": {"/": {"Proxy": target}}}
+json.dump(d, open(state, "w"))
+PY
+  ;;
+  serve\ --https=*) python3 - "$STATE" "$2" <<'PY'
+import json, sys
+state, port = sys.argv[1], sys.argv[2].split("=")[1]
+d = json.load(open(state)); d.get("Web", {}).pop(f"mac.tail1234.ts.net:{port}", None); json.dump(d, open(state, "w"))
+PY
+  ;;
+esac
+"""
+
+
+def test_tailscale_serve_puts_an_app_on_the_tailnet_without_taking_another_apps_port(tmp_path, monkeypatch):
+    from jobkit import prereqs
+
+    tool = tmp_path / "tailscale"
+    tool.write_text(FAKE_TAILSCALE)
+    tool.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{tmp_path}:/usr/bin:/bin")
+    monkeypatch.setattr(prereqs, "BREW_DIRS", [])
+    assert prereqs.served() == {}
+    assert prereqs.serve(8726, "http://127.0.0.1:8723") == "https://mac.tail1234.ts.net:8726"
+    assert prereqs.serve(8726, "http://127.0.0.1:8723")  # again: the same, fine
+    assert prereqs.served() == {8726: "http://127.0.0.1:8723"}
+    with pytest.raises(ValueError, match="already goes to"):  # another app's port is never taken over
+        prereqs.serve(8726, "http://127.0.0.1:2283")
+    prereqs.unserve(8726)
+    assert prereqs.served() == {}

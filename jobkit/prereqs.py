@@ -82,6 +82,50 @@ def tailscale_name() -> str:
     return ((tailscale_status().get("Self") or {}).get("DNSName") or "").rstrip(".").lower()
 
 
+def served() -> dict[int, str]:
+    """What `tailscale serve` puts on this Mac's Tailscale name: {https port: the local address it forwards to}."""
+    cli = tailscale_cli()
+    if not cli:
+        return {}
+    try:
+        done = subprocess.run(
+            [cli, "serve", "status", "--json"], check=False, capture_output=True, text=True, timeout=10
+        )
+        status = json.loads(done.stdout or "{}") if done.returncode == 0 else {}
+    except (OSError, subprocess.SubprocessError, ValueError):
+        return {}
+    out = {}
+    for host, web in (status.get("Web") or {}).items():
+        target = ((web.get("Handlers") or {}).get("/") or {}).get("Proxy", "")
+        out[int(host.rsplit(":", 1)[1]) if ":" in host else 443] = target
+    return out
+
+
+def serve(port: int, target: str) -> str:
+    """Puts the local address `target` (http://127.0.0.1:<port>) on https://<this Mac's Tailscale name>:<port>, for
+    the tailnet only (never Funnel), kept across restarts; returns that address. ValueError when Tailscale is not
+    there or not signed in, or the port already forwards to something else (another app's)."""
+    cli, name = tailscale_cli(), tailscale_name()
+    if not cli or not name:
+        raise ValueError("Tailscale is not installed or not signed in")
+    now = served().get(port)
+    if now and now.rstrip("/") != target.rstrip("/"):
+        raise ValueError(f"port {port} on Tailscale already goes to {now}: pick another port")
+    done = subprocess.run(
+        [cli, "serve", "--bg", f"--https={port}", target], check=False, capture_output=True, text=True, timeout=30
+    )
+    if done.returncode:
+        raise ValueError(f"tailscale serve failed: {(done.stderr or done.stdout).strip()[:200]}")
+    return f"https://{name}" + ("" if port == 443 else f":{port}")
+
+
+def unserve(port: int) -> None:
+    """Takes the port off this Mac's Tailscale name (nothing else that is served changes)."""
+    cli = tailscale_cli()
+    if cli and port in served():
+        subprocess.run([cli, "serve", f"--https={port}", "off"], check=False, capture_output=True, timeout=30)
+
+
 def tailscale(optional: bool = False) -> Part:
     def check() -> tuple[bool, str]:
         if not tailscale_cli():
