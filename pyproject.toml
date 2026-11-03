@@ -1,0 +1,22 @@
+[project]
+name = "jobkit"
+version = "0.1.0"
+description = "Scheduled-job history in an app's own SQLite, reported in one shared shape for a jobs page."
+requires-python = ">=3.11"
+license = { text = "MIT" }
+dependencies = []
+
+[dependency-groups]
+dev = ["pytest>=8"]
+
+[project.scripts]
+job-run = "jobkit.cli:main"
+job-page = "jobkit.page:main"
+job-backup = "jobkit.backup:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.ruff]
+line-length = 120
