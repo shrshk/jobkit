@@ -53,7 +53,7 @@ job-page --db "$DB" --app "My App" --port 8089 --allow-host app.example.com
 It serves /jobs, /api/jobs, Run now and Pause on 127.0.0.1, and answers only to loopback names and each
 `--allow-host` (the name your proxy serves it under). Any other Host gets 421, so a web page that points its own name
 at this machine (DNS rebinding) cannot read the runs or press the buttons. An app serving its own routes should
-check the Host the same way.
+check the Host the same way. To serve it under a domain of your own: [Your own domain with Cloudflare](https://gist.github.com/shrshk/58b710264907d1e229675a2313f24b0e).
 
 From the jobs page, **Pause** stops a job's schedule (`job-run` skips a paused job; an in-app schedule checks
 `jobs.paused(name)`), and **Run now** starts it: an in-app job's `jobs.register(name, fn)`, or a launchd job's
